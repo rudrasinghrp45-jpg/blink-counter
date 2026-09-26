@@ -1,77 +1,1244 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Live Blink Counter</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mountain Outlaw</title>
+
 <style>
-body{font-family:system-ui,sans-serif;text-align:center;background:#111;color:#fff;margin:0;padding:20px}
-h1{margin:8px 0 4px} p{color:#bbb}
-video{width:min(92vw,720px);border-radius:18px;transform:scaleX(-1);background:#222}
-#count{font-size:48px;font-weight:700;margin:15px}
-button{font-size:18px;padding:12px 22px;border:0;border-radius:12px}
-#status{margin:12px;color:#9f9}
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    overflow: hidden;
+    background: #111;
+    font-family: Arial, sans-serif;
+}
+
+canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+}
+
+#hud {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    display: flex;
+    justify-content: space-between;
+    color: white;
+    z-index: 5;
+    pointer-events: none;
+}
+
+.panel {
+    background: rgba(0,0,0,.65);
+    padding: 10px 14px;
+    border-radius: 12px;
+}
+
+#help {
+    position: fixed;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: white;
+    background: rgba(0,0,0,.65);
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    z-index: 5;
+    text-align: center;
+}
+
+#message {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    text-align: center;
+    z-index: 10;
+    pointer-events: none;
+}
+
+.box {
+    background: rgba(10,15,20,.92);
+    padding: 30px;
+    border-radius: 18px;
+}
+
+button {
+    padding: 11px 20px;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: bold;
+}
 </style>
 </head>
+
 <body>
-<h1>👁️ Live Blink Counter</h1>
-<p>Allow camera access, look toward the camera, and blink normally.</p>
-<video id="video" autoplay playsinline></video>
-<div id="count">Blinks: 0</div>
-<div id="status">Starting camera…</div>
-<button onclick="resetCount()">Reset</button>
 
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<canvas id="game"></canvas>
+
+<div id="hud">
+    <div class="panel">
+        ❤️ Health: <b id="health">100</b>
+        &nbsp; 🎯 Enemies: <b id="enemies">50</b>
+    </div>
+
+    <div class="panel">
+        ⭐ Score: <b id="score">0</b>
+        &nbsp; 🚙 <b id="carStatus">On Foot</b>
+    </div>
+</div>
+
+<div id="help">
+    WASD / Arrow Keys = Move |
+    Mouse / Space = Shoot |
+    E = Enter / Exit Car |
+    R = Restart
+</div>
+
+<div id="message"></div>
+
 <script>
-const video=document.getElementById('video');
-const countEl=document.getElementById('count');
-const statusEl=document.getElementById('status');
-let blinks=0, closed=false, lastBlink=0;
 
-function d(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
-const L=[362,385,387,263,373,380], R=[33,160,158,133,153,144];
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
 
-function ear(p,e){
-  return (d(p[e[1]],p[e[5]])+d(p[e[2]],p[e[4]]))/(2*d(p[e[0]],p[e[3]]));
+let W = window.innerWidth;
+let H = window.innerHeight;
+
+canvas.width = W;
+canvas.height = H;
+
+window.addEventListener("resize", () => {
+    W = window.innerWidth;
+    H = window.innerHeight;
+
+    canvas.width = W;
+    canvas.height = H;
+});
+
+
+// ----------------------
+// WORLD
+// ----------------------
+
+const world = {
+    width: 3000,
+    height: 2200
+};
+
+
+// ----------------------
+// PLAYER
+// ----------------------
+
+let player;
+
+
+// ----------------------
+// GAME OBJECTS
+// ----------------------
+
+let enemies = [];
+let bullets = [];
+let cars = [];
+let particles = [];
+
+let score = 0;
+let gameOver = false;
+
+
+// ----------------------
+// INPUT
+// ----------------------
+
+const keys = new Set();
+
+const mouse = {
+    x: W / 2,
+    y: H / 2,
+    down: false
+};
+
+window.addEventListener("keydown", e => {
+
+    keys.add(e.key.toLowerCase());
+
+    if (e.key.toLowerCase() === "r") {
+        restart();
+    }
+
+});
+
+window.addEventListener("keyup", e => {
+    keys.delete(e.key.toLowerCase());
+});
+
+canvas.addEventListener("mousemove", e => {
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+});
+
+canvas.addEventListener("mousedown", () => {
+    mouse.down = true;
+});
+
+window.addEventListener("mouseup", () => {
+    mouse.down = false;
+});
+
+
+// ----------------------
+// RESTART
+// ----------------------
+
+function restart() {
+
+    player = {
+        x: 1500,
+        y: 1100,
+        health: 100,
+        radius: 15,
+        inCar: false,
+        shootCooldown: 0
+    };
+
+    enemies = [];
+    bullets = [];
+    cars = [];
+    particles = [];
+
+    score = 0;
+    gameOver = false;
+
+    document.getElementById("message").innerHTML = "";
+
+    createCars();
+    createEnemies();
+
+    updateHUD();
 }
-function resetCount(){blinks=0;closed=false;countEl.textContent="Blinks: 0"}
 
-const mesh=new FaceMesh({locateFile:f=>
-  `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
-mesh.setOptions({maxNumFaces:1,refineLandmarks:true,
-  minDetectionConfidence:.5,minTrackingConfidence:.5});
 
-mesh.onResults(r=>{
-  if(!r.multiFaceLandmarks?.length){
-    statusEl.textContent="No face detected — look toward the camera.";
-    return;
-  }
-  statusEl.textContent="Camera active ✓";
-  const p=r.multiFaceLandmarks[0];
-  const e=(ear(p,L)+ear(p,R))/2;
-  const now=performance.now();
+// ----------------------
+// CREATE CARS
+// ----------------------
 
-  if(e<.20){
-    if(!closed && now-lastBlink>250) closed=true;
-  }else if(closed){
-    if(now-lastBlink>250){blinks++; lastBlink=now;}
-    closed=false;
-    countEl.textContent=`Blinks: ${blinks}`;
-  }
-});
+function createCars() {
 
-const cam=new Camera(video,{
-  onFrame:async()=>{await mesh.send({image:video})},
-  width:640,height:480
-});
+    for (let i = 0; i < 5; i++) {
 
-navigator.mediaDevices?.getUserMedia({video:true})
-.then(()=>{statusEl.textContent="Camera permission granted ✓"; cam.start()})
-.catch(err=>{
-  statusEl.textContent="Camera permission denied or unavailable.";
-  console.error(err);
-});
+        cars.push({
+            x: 650 + i * 500,
+            y: 700 + (i % 2) * 650,
+            angle: i % 2 ? 0.25 : -0.25,
+            occupied: false
+        });
+
+    }
+}
+
+
+// ----------------------
+// CREATE 50 ENEMIES
+// ----------------------
+
+function createEnemies() {
+
+    for (let i = 0; i < 50; i++) {
+
+        const angle = Math.random() * Math.PI * 2;
+        const distance = 450 + Math.random() * 1100;
+
+        enemies.push({
+
+            x: 1500 + Math.cos(angle) * distance,
+            y: 1100 + Math.sin(angle) * distance,
+
+            radius: 13,
+
+            speed: 35 + Math.random() * 25,
+
+            hitCooldown: 0
+
+        });
+    }
+}
+
+
+// ----------------------
+// DISTANCE
+// ----------------------
+
+function distance(a, b) {
+
+    return Math.hypot(
+        a.x - b.x,
+        a.y - b.y
+    );
+
+}
+
+
+// ----------------------
+// WORLD → SCREEN
+// ----------------------
+
+function screenPosition(x, y) {
+
+    return {
+
+        x: x - player.x + W / 2,
+        y: y - player.y + H / 2
+
+    };
+
+}
+
+
+// ----------------------
+// MOUNTAIN ROAD
+// ----------------------
+
+function roadY(x) {
+
+    return 1050
+        + Math.sin(x / 330) * 260
+        + Math.sin(x / 95) * 65;
+
+}
+
+
+// ----------------------
+// SHOOT
+// ----------------------
+
+function shoot() {
+
+    if (player.shootCooldown > 0 || gameOver)
+        return;
+
+    player.shootCooldown = 0.18;
+
+    const angle = Math.atan2(
+        mouse.y - H / 2,
+        mouse.x - W / 2
+    );
+
+    bullets.push({
+
+        x: player.x,
+        y: player.y,
+
+        vx: Math.cos(angle) * 800,
+        vy: Math.sin(angle) * 800,
+
+        life: 1
+
+    });
+}
+
+
+// ----------------------
+// PARTICLES
+// ----------------------
+
+function explosion(x, y) {
+
+    for (let i = 0; i < 10; i++) {
+
+        const angle =
+            Math.random() * Math.PI * 2;
+
+        const speed =
+            40 + Math.random() * 100;
+
+        particles.push({
+
+            x,
+            y,
+
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+
+            life: .5
+
+        });
+
+    }
+}
+
+
+// ----------------------
+// ENTER / EXIT CAR
+// ----------------------
+
+function toggleCar() {
+
+    const nearby = cars.find(car =>
+        Math.hypot(
+            car.x - player.x,
+            car.y - player.y
+        ) < 80
+    );
+
+    if (!nearby)
+        return;
+
+    if (player.inCar) {
+
+        player.inCar = false;
+        nearby.occupied = false;
+
+        document.getElementById(
+            "carStatus"
+        ).textContent = "On Foot";
+
+    } else {
+
+        if (!nearby.occupied) {
+
+            player.inCar = true;
+
+            nearby.occupied = true;
+
+            player.x = nearby.x;
+            player.y = nearby.y;
+
+            document.getElementById(
+                "carStatus"
+            ).textContent = "In Hilux";
+
+        }
+
+    }
+}
+
+
+// ----------------------
+// UPDATE
+// ----------------------
+
+function update(delta) {
+
+    if (gameOver)
+        return;
+
+
+    player.shootCooldown =
+        Math.max(
+            0,
+            player.shootCooldown - delta
+        );
+
+
+    // ENTER CAR
+
+    if (keys.has("e")) {
+
+        keys.delete("e");
+
+        toggleCar();
+
+    }
+
+
+    // MOVEMENT
+
+    let dx =
+        (keys.has("d") ||
+         keys.has("arrowright")) -
+        (keys.has("a") ||
+         keys.has("arrowleft"));
+
+    let dy =
+        (keys.has("s") ||
+         keys.has("arrowdown")) -
+        (keys.has("w") ||
+         keys.has("arrowup"));
+
+
+    const length =
+        Math.hypot(dx, dy) || 1;
+
+
+    const speed =
+        player.inCar ? 330 : 190;
+
+
+    player.x +=
+        dx / length * speed * delta;
+
+    player.y +=
+        dy / length * speed * delta;
+
+
+    player.x = Math.max(
+        30,
+        Math.min(
+            world.width - 30,
+            player.x
+        )
+    );
+
+    player.y = Math.max(
+        30,
+        Math.min(
+            world.height - 30,
+            player.y
+        )
+    );
+
+
+    // CAR FOLLOWS PLAYER
+
+    if (player.inCar) {
+
+        const car =
+            cars.find(c => c.occupied);
+
+        if (car) {
+
+            car.x = player.x;
+            car.y = player.y;
+
+        }
+
+    }
+
+
+    // SHOOT
+
+    if (mouse.down || keys.has(" ")) {
+
+        shoot();
+
+    }
+
+
+    // ----------------------
+    // ENEMY AI
+    // ----------------------
+
+    for (const enemy of enemies) {
+
+        enemy.hitCooldown =
+            Math.max(
+                0,
+                enemy.hitCooldown - delta
+            );
+
+
+        const dx =
+            player.x - enemy.x;
+
+        const dy =
+            player.y - enemy.y;
+
+        const d =
+            Math.hypot(dx, dy);
+
+
+        if (d > 30) {
+
+            enemy.x +=
+                dx / d *
+                enemy.speed *
+                delta;
+
+            enemy.y +=
+                dy / d *
+                enemy.speed *
+                delta;
+
+        }
+
+
+        if (
+            d < 40 &&
+            enemy.hitCooldown <= 0
+        ) {
+
+            player.health -=
+                player.inCar ? 3 : 6;
+
+            enemy.hitCooldown = .7;
+
+        }
+
+    }
+
+
+    // ----------------------
+    // BULLETS
+    // ----------------------
+
+    for (
+        let i = bullets.length - 1;
+        i >= 0;
+        i--
+    ) {
+
+        const bullet = bullets[i];
+
+        bullet.x +=
+            bullet.vx * delta;
+
+        bullet.y +=
+            bullet.vy * delta;
+
+        bullet.life -= delta;
+
+
+        let hit = false;
+
+
+        for (
+            let j = enemies.length - 1;
+            j >= 0;
+            j--
+        ) {
+
+            const enemy = enemies[j];
+
+
+            if (
+                Math.hypot(
+                    bullet.x - enemy.x,
+                    bullet.y - enemy.y
+                ) < 20
+            ) {
+
+                explosion(
+                    enemy.x,
+                    enemy.y
+                );
+
+                enemies.splice(j, 1);
+
+                score += 100;
+
+                hit = true;
+
+                break;
+
+            }
+
+        }
+
+
+        if (
+            hit ||
+            bullet.life <= 0
+        ) {
+
+            bullets.splice(i, 1);
+
+        }
+
+    }
+
+
+    // PARTICLES
+
+    for (
+        let i = particles.length - 1;
+        i >= 0;
+        i--
+    ) {
+
+        const p = particles[i];
+
+        p.x += p.vx * delta;
+        p.y += p.vy * delta;
+
+        p.vx *= .94;
+        p.vy *= .94;
+
+        p.life -= delta;
+
+
+        if (p.life <= 0) {
+
+            particles.splice(i, 1);
+
+        }
+
+    }
+
+
+    // GAME OVER
+
+    if (player.health <= 0) {
+
+        gameOver = true;
+
+        document.getElementById(
+            "message"
+        ).innerHTML = `
+            <div class="box">
+                <h1>Mission Failed</h1>
+                <p>You defeated ${50 - enemies.length} enemies.</p>
+                <button onclick="restart()">Restart</button>
+            </div>
+        `;
+
+    }
+
+
+    // WIN
+
+    if (enemies.length === 0) {
+
+        gameOver = true;
+
+        document.getElementById(
+            "message"
+        ).innerHTML = `
+            <div class="box">
+                <h1>🏆 Mountain Cleared!</h1>
+                <p>You defeated all 50 enemies.</p>
+                <button onclick="restart()">Play Again</button>
+            </div>
+        `;
+
+    }
+
+
+    updateHUD();
+
+}
+
+
+// ----------------------
+// HUD
+// ----------------------
+
+function updateHUD() {
+
+    document.getElementById(
+        "health"
+    ).textContent =
+        Math.max(
+            0,
+            Math.round(player.health)
+        );
+
+
+    document.getElementById(
+        "enemies"
+    ).textContent =
+        enemies.length;
+
+
+    document.getElementById(
+        "score"
+    ).textContent =
+        score;
+
+}
+
+
+// ----------------------
+// DRAW
+// ----------------------
+
+function draw() {
+
+    ctx.clearRect(
+        0,
+        0,
+        W,
+        H
+    );
+
+
+    // SKY
+
+    ctx.fillStyle = "#78a9cc";
+
+    ctx.fillRect(
+        0,
+        0,
+        W,
+        H
+    );
+
+
+    // DISTANT MOUNTAINS
+
+    for (let layer = 0; layer < 3; layer++) {
+
+        ctx.fillStyle =
+            layer === 0
+                ? "#597d78"
+                : layer === 1
+                ? "#496c65"
+                : "#3d5c57";
+
+
+        ctx.beginPath();
+
+        ctx.moveTo(
+            0,
+            H * .58
+        );
+
+
+        for (
+            let x = 0;
+            x <= W;
+            x += 70
+        ) {
+
+            ctx.lineTo(
+                x,
+                H * .48 +
+                Math.sin(
+                    (x + layer * 180) / 130
+                ) * 75 +
+                layer * 35
+            );
+
+        }
+
+
+        ctx.lineTo(W, H);
+        ctx.lineTo(0, H);
+
+        ctx.closePath();
+
+        ctx.fill();
+
+    }
+
+
+    // GROUND
+
+    ctx.fillStyle = "#49684a";
+
+    ctx.fillRect(
+        0,
+        H * .56,
+        W,
+        H
+    );
+
+
+    // MOUNTAIN ROAD
+
+    ctx.strokeStyle = "#555";
+
+    ctx.lineWidth = 95;
+
+    ctx.lineCap = "round";
+
+    ctx.beginPath();
+
+
+    for (
+        let x = -200;
+        x <= world.width + 200;
+        x += 25
+    ) {
+
+        const p =
+            screenPosition(
+                x,
+                roadY(x)
+            );
+
+
+        if (x === -200)
+            ctx.moveTo(p.x, p.y);
+        else
+            ctx.lineTo(p.x, p.y);
+
+    }
+
+    ctx.stroke();
+
+
+    // ROAD CENTER
+
+    ctx.strokeStyle = "#d1bf8e";
+
+    ctx.lineWidth = 4;
+
+    ctx.setLineDash([
+        25,
+        22
+    ]);
+
+
+    ctx.beginPath();
+
+
+    for (
+        let x = -200;
+        x <= world.width + 200;
+        x += 25
+    ) {
+
+        const p =
+            screenPosition(
+                x,
+                roadY(x)
+            );
+
+
+        if (x === -200)
+            ctx.moveTo(p.x, p.y);
+        else
+            ctx.lineTo(p.x, p.y);
+
+    }
+
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+
+
+    // CARS
+
+    for (const car of cars) {
+
+        const p =
+            screenPosition(
+                car.x,
+                car.y
+            );
+
+
+        ctx.save();
+
+        ctx.translate(
+            p.x,
+            p.y
+        );
+
+        ctx.rotate(car.angle);
+
+
+        // Hilux body
+
+        ctx.fillStyle = "#bd4e35";
+
+        ctx.fillRect(
+            -42,
+            -20,
+            84,
+            40
+        );
+
+
+        // Windows
+
+        ctx.fillStyle = "#202a32";
+
+        ctx.fillRect(
+            -20,
+            -15,
+            32,
+            30
+        );
+
+
+        // Wheels
+
+        ctx.fillStyle = "#111";
+
+        ctx.fillRect(
+            -36,
+            -27,
+            18,
+            8
+        );
+
+        ctx.fillRect(
+            18,
+            -27,
+            18,
+            8
+        );
+
+        ctx.fillRect(
+            -36,
+            19,
+            18,
+            8
+        );
+
+        ctx.fillRect(
+            18,
+            19,
+            18,
+            8
+        );
+
+
+        ctx.restore();
+
+    }
+
+
+    // ENEMIES
+
+    for (const enemy of enemies) {
+
+        const p =
+            screenPosition(
+                enemy.x,
+                enemy.y
+            );
+
+
+        if (
+            p.x < -40 ||
+            p.x > W + 40 ||
+            p.y < -40 ||
+            p.y > H + 40
+        )
+            continue;
+
+
+        ctx.fillStyle = "#27232d";
+
+        ctx.beginPath();
+
+        ctx.arc(
+            p.x,
+            p.y,
+            14,
+            0,
+            Math.PI * 2
+        );
+
+        ctx.fill();
+
+
+        ctx.fillStyle = "#d17a62";
+
+        ctx.fillRect(
+            p.x - 7,
+            p.y - 18,
+            14,
+            9
+        );
+
+
+        // enemy weapon
+
+        ctx.fillStyle = "#111";
+
+        ctx.fillRect(
+            p.x + 7,
+            p.y - 3,
+            18,
+            5
+        );
+
+    }
+
+
+    // BULLETS
+
+    ctx.fillStyle = "#ffeaa5";
+
+
+    for (const bullet of bullets) {
+
+        const p =
+            screenPosition(
+                bullet.x,
+                bullet.y
+            );
+
+
+        ctx.beginPath();
+
+        ctx.arc(
+            p.x,
+            p.y,
+            4,
+            0,
+            Math.PI * 2
+        );
+
+        ctx.fill();
+
+    }
+
+
+    // PLAYER
+
+    ctx.save();
+
+    ctx.translate(
+        W / 2,
+        H / 2
+    );
+
+
+    if (player.inCar) {
+
+        ctx.fillStyle = "#d3aa43";
+
+        ctx.fillRect(
+            -42,
+            -21,
+            84,
+            42
+        );
+
+
+        ctx.fillStyle = "#202a32";
+
+        ctx.fillRect(
+            -20,
+            -16,
+            34,
+            32
+        );
+
+    } else {
+
+        ctx.fillStyle = "#303640";
+
+        ctx.beginPath();
+
+        ctx.arc(
+            0,
+            0,
+            15,
+            0,
+            Math.PI * 2
+        );
+
+        ctx.fill();
+
+
+        ctx.fillStyle = "#dfa67c";
+
+        ctx.beginPath();
+
+        ctx.arc(
+            0,
+            -13,
+            8,
+            0,
+            Math.PI * 2
+        );
+
+        ctx.fill();
+
+    }
+
+
+    // Gun
+
+    const angle =
+        Math.atan2(
+            mouse.y - H / 2,
+            mouse.x - W / 2
+        );
+
+
+    ctx.rotate(angle);
+
+
+    ctx.fillStyle = "#151515";
+
+    ctx.fillRect(
+        9,
+        -3,
+        30,
+        6
+    );
+
+
+    ctx.restore();
+
+
+    // PARTICLES
+
+    for (const p of particles) {
+
+        const s =
+            screenPosition(
+                p.x,
+                p.y
+            );
+
+
+        ctx.globalAlpha =
+            Math.max(
+                0,
+                p.life / .5
+            );
+
+
+        ctx.fillStyle = "#f2b35d";
+
+        ctx.fillRect(
+            s.x,
+            s.y,
+            4,
+            4
+        );
+
+    }
+
+
+    ctx.globalAlpha = 1;
+
+}
+
+
+// ----------------------
+// GAME LOOP
+// ----------------------
+
+let lastTime = performance.now();
+
+function gameLoop(time) {
+
+    const delta =
+        Math.min(
+            .033,
+            (time - lastTime) / 1000
+        );
+
+    lastTime = time;
+
+    update(delta);
+
+    draw();
+
+    requestAnimationFrame(
+        gameLoop
+    );
+
+}
+
+
+restart();
+
+requestAnimationFrame(
+    gameLoop
+);
+
 </script>
+
 </body>
 </html>
